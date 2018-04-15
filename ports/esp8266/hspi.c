@@ -24,7 +24,10 @@
 */
 
 #include "hspi.h"
+#include "etshal.h"
+#include <stdio.h>
 
+#define ETS_SPI_INUM 2
 /*
 Wrapper to setup HSPI/SPI GPIO pins and default SPI clock
     spi_no - SPI (0) or HSPI (1)
@@ -38,6 +41,160 @@ void spi_init(uint8_t spi_no) {
 
     SET_PERI_REG_MASK(SPI_USER(spi_no), SPI_CS_SETUP|SPI_CS_HOLD);
     CLEAR_PERI_REG_MASK(SPI_USER(spi_no), SPI_FLASH_MODE);
+}
+
+static uint32_t spi_data_32[8] = {0};
+static uint8_t* spi_data = (uint8_t*)spi_data_32;
+static uint8 idx = 0;
+
+void dump_memory(uint32_t* addr, uint32_t size)
+{
+    size_t offset = 0;
+    for (; offset < size; offset += 16) {
+        printf("%08X: %08X %08X %08X %08X\n", (uint32_t)addr, addr[0], addr[1], addr[2], addr[3]);
+        addr += 4;
+    }
+}
+void spi_dump_registers(uint8_t spi_no) {
+    dump_memory((uint32_t*)REG_SPI_BASE(spi_no), 0x40);
+}
+
+// Show the spi registers.
+#define SHOWSPIREG() __ShowRegValue(__func__, __LINE__);
+/**
+ * @brief Print debug information.
+ *
+ */
+void __ShowRegValue(const char * func, uint32_t line)
+{
+    printf("\r\n FUNC[%s],line[%d]\r\n", func, line);
+    printf(" SPI_ADDR      [0x%08x]\r\n", READ_PERI_REG(SPI_ADDR(HSPI)));
+    printf(" SPI_CMD       [0x%08x]\r\n", READ_PERI_REG(SPI_CMD(HSPI)));
+    printf(" SPI_CTRL      [0x%08x]\r\n", READ_PERI_REG(SPI_CTRL(HSPI)));
+    printf(" SPI_CTRL2     [0x%08x]\r\n", READ_PERI_REG(SPI_CTRL2(HSPI)));
+    printf(" SPI_CLOCK     [0x%08x]\r\n", READ_PERI_REG(SPI_CLOCK(HSPI)));
+    printf(" SPI_RD_STATUS [0x%08x]\r\n", READ_PERI_REG(SPI_RD_STATUS(HSPI)));
+    printf(" SPI_WR_STATUS [0x%08x]\r\n", READ_PERI_REG(SPI_WR_STATUS(HSPI)));
+    printf(" SPI_USER      [0x%08x]\r\n", READ_PERI_REG(SPI_USER(HSPI)));
+    printf(" SPI_USER1     [0x%08x]\r\n", READ_PERI_REG(SPI_USER1(HSPI)));
+    printf(" SPI_USER2     [0x%08x]\r\n", READ_PERI_REG(SPI_USER2(HSPI)));
+    printf(" SPI_PIN       [0x%08x]\r\n", READ_PERI_REG(SPI_PIN(HSPI)));
+    printf(" SPI_SLAVE     [0x%08x]\r\n", READ_PERI_REG(SPI_SLAVE(HSPI)));
+    printf(" SPI_SLAVE1    [0x%08x]\r\n", READ_PERI_REG(SPI_SLAVE1(HSPI)));
+    printf(" SPI_SLAVE2    [0x%08x]\r\n", READ_PERI_REG(SPI_SLAVE2(HSPI)));
+}
+
+void spi_slave_isr_handler(void *para)
+{
+    printf("<START> SPI SLAVE INTERRUPT!\n");
+  	uint32 regvalue;
+
+    if(READ_PERI_REG(0x3ff00020) & BIT4) {
+        printf("BIT4!\n");
+      	CLEAR_PERI_REG_MASK(SPI_SLAVE(SPI), 0x3ff);
+  	}
+    else if (READ_PERI_REG(0x3ff00020) & BIT7) {
+        // HSPI
+      	regvalue = READ_PERI_REG(SPI_SLAVE(HSPI));
+        printf("HSPI int. SPI_SLAVE = %08X\n", regvalue);
+        // spi_dump_registers(HSPI);
+        SHOWSPIREG();
+       	CLEAR_PERI_REG_MASK(
+            SPI_SLAVE(HSPI),
+            SPI_TRANS_DONE_EN|SPI_SLV_WR_STA_DONE_EN|SPI_SLV_RD_STA_DONE_EN|
+            SPI_SLV_WR_BUF_DONE_EN|SPI_SLV_RD_BUF_DONE_EN);
+      	SET_PERI_REG_MASK(SPI_SLAVE(HSPI), SPI_SYNC_RESET);
+      	CLEAR_PERI_REG_MASK(
+            SPI_SLAVE(HSPI),
+			SPI_TRANS_DONE|SPI_SLV_WR_STA_DONE|SPI_SLV_RD_STA_DONE|
+			SPI_SLV_WR_BUF_DONE|SPI_SLV_RD_BUF_DONE);
+        SET_PERI_REG_MASK(
+            SPI_SLAVE(HSPI),
+			SPI_TRANS_DONE_EN|SPI_SLV_WR_STA_DONE_EN|SPI_SLV_RD_STA_DONE_EN|
+            SPI_SLV_WR_BUF_DONE_EN|SPI_SLV_RD_BUF_DONE_EN);
+
+        if (regvalue & SPI_SLV_WR_BUF_DONE) {
+    		idx = 0;
+    		while (idx < 32) {
+                spi_data_32[idx] = READ_PERI_REG(SPI_W0(HSPI) + idx);
+    			idx += 4;
+                printf("data[%d:%d] = [%02X, %02X, %02X, %02X]\n", idx, idx+3, spi_data[idx], spi_data[idx+1], spi_data[idx+2], spi_data[idx+3]);
+            }
+        }
+        if (regvalue & SPI_SLV_RD_BUF_DONE) {
+            printf("SLV_RD_BUF_DONE!\n");
+            WRITE_PERI_REG(SPI_W8(HSPI),0x05040302);
+            WRITE_PERI_REG(SPI_W9(HSPI),0x09080706);
+            WRITE_PERI_REG(SPI_W10(HSPI),0x0d0c0b0a);
+            WRITE_PERI_REG(SPI_W11(HSPI),0x11100f0e);
+            WRITE_PERI_REG(SPI_W12(HSPI),0x15141312);
+            WRITE_PERI_REG(SPI_W13(HSPI),0x19181716);
+            WRITE_PERI_REG(SPI_W14(HSPI),0x1d1c1b1a);
+            WRITE_PERI_REG(SPI_W15(HSPI),0x21201f1e);
+	 	}
+        if (regvalue & SPI_SLV_RD_STA_DONE) {
+            uint32_t statusR = READ_PERI_REG(SPI_RD_STATUS(HSPI));
+            uint32_t statusW = READ_PERI_REG(SPI_WR_STATUS(HSPI));
+            printf("SPI_SLV_RD_STA_DONE[R=0x%08x,W=0x%08x]\n\r", statusR, statusW);
+        }
+        if (regvalue & SPI_SLV_WR_STA_DONE) {
+            uint32_t statusR = READ_PERI_REG(SPI_RD_STATUS(HSPI));
+            uint32_t statusW = READ_PERI_REG(SPI_WR_STATUS(HSPI));
+            printf("SPI_SLV_WR_STA_DONE[R=0x%08x,W=0x%08x]\n\r", statusR, statusW);
+        }
+        if ((regvalue & SPI_TRANS_DONE) && ((regvalue & 0xf) == 0)) {
+            printf("SPI_TRANS_DONE\n\r");
+        }
+    }
+    printf("<END> SPI SLAVE INTERRUPT!\n");
+}
+
+void spi_slave_init(uint8_t spi_no, uint8_t data_len) {
+    printf("<START> spi_slave_init()\n");
+    if (spi_no != HSPI) {
+        printf("Only HSPI (#%d) is supported!\n", HSPI);
+        return;
+    }
+    spi_data = (uint8_t*)spi_data_32;
+    spi_init_gpio(spi_no, SPI_CLK_USE_DIV);
+    // spi_clock(spi_no, SPI_CLK_PREDIV, SPI_CLK_CNTDIV);
+    spi_tx_byte_order(spi_no, SPI_BYTE_ORDER_HIGH_TO_LOW);
+    spi_rx_byte_order(spi_no, SPI_BYTE_ORDER_HIGH_TO_LOW);
+
+    uint32 data_bit_len;
+    if (data_len<=1) data_bit_len=7;
+    else if (data_len >= 32) data_bit_len = 0xff;
+    else data_bit_len = (data_len << 3) - 1;
+    printf("data_bit_len = %d\n", data_bit_len);
+    //slave mode,slave use buffers which are register "SPI_FLASH_C0~C15", enable trans done isr
+    //set bit 30 bit 29 bit9,bit9 is trans done isr mask
+    SET_PERI_REG_MASK(
+        SPI_SLAVE(spi_no),
+    	SPI_SLAVE_MODE|SPI_SLV_WR_RD_BUF_EN|SPI_SLV_WR_BUF_DONE_EN|SPI_SLV_RD_BUF_DONE_EN|
+        SPI_SLV_WR_STA_DONE_EN|SPI_SLV_RD_STA_DONE_EN|SPI_TRANS_DONE_EN);
+
+    CLEAR_PERI_REG_MASK(SPI_USER(spi_no), SPI_FLASH_MODE);
+    // SLAVE SEND DATA BUFFER IN C8-C15
+    SET_PERI_REG_MASK(SPI_USER(spi_no), SPI_USR_MISO_HIGHPART);
+    SET_PERI_REG_MASK(SPI_CTRL2(spi_no), (0x2 & SPI_MOSI_DELAY_NUM) << SPI_MOSI_DELAY_NUM_S);
+    printf("SPI_CTRL2 is %08x\n", READ_PERI_REG(SPI_CTRL2(spi_no)));
+    WRITE_PERI_REG(SPI_CLOCK(spi_no), 0);
+    WRITE_PERI_REG(SPI_USER2(spi_no), (0x7 & SPI_USR_COMMAND_BITLEN) << SPI_USR_COMMAND_BITLEN_S);
+
+    SET_PERI_REG_MASK(
+        SPI_SLAVE1(spi_no),
+        (data_bit_len & SPI_SLV_BUF_BITLEN) << SPI_SLV_BUF_BITLEN_S) |
+        ((0x7 & SPI_SLV_STATUS_BITLEN) << SPI_SLV_STATUS_BITLEN_S) |
+        ((0x7 & SPI_SLV_WR_ADDR_BITLEN) << SPI_SLV_WR_ADDR_BITLEN_S) |
+        ((0x7 & SPI_SLV_RD_ADDR_BITLEN) << SPI_SLV_RD_ADDR_BITLEN_S);
+    SET_PERI_REG_MASK(SPI_PIN(spi_no), BIT19);
+    // maybe enable slave transmission liston
+    SET_PERI_REG_MASK(SPI_CMD(spi_no), SPI_USR);
+    // register level2 isr function, which contains spi, hspi and i2s events
+    ets_isr_attach(ETS_SPI_INUM, spi_slave_isr_handler, NULL);
+    // enable level2 isr, which contains spi, hspi and i2s events
+    ets_isr_unmask(BIT(ETS_SPI_INUM));
+    printf("<END> spi_slave_init()\n");
 }
 
 

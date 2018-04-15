@@ -29,3 +29,7 @@
 // Entries for sys.path
 Q(/)
 Q(/lib)
+Q(SPI_hello)
+Q(SpiSlave)
+Q(enable)
+Q(disable)

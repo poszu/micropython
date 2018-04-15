@@ -250,6 +250,7 @@
 #define SPI_W14(i) 							(REG_SPI_BASE(i) +0x78)
 #define SPI_W15(i) 							(REG_SPI_BASE(i) +0x7C)
 
+#define SPI_W(i,n)                          (SPI_W0(i) + n * 4)
  // +0x80 to +0xBC could be SPI_W16 through SPI_W31?
 
  // +0xC0 to +0xEC not currently defined.

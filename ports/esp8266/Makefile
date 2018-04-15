@@ -80,6 +80,7 @@ SRC_C = \
 	machine_uart.c \
 	machine_wdt.c \
 	machine_hspi.c \
+	machine_hspi_slave.c \
 	modesp.c \
 	modnetwork.c \
 	modutime.c \
